@@ -2,9 +2,20 @@
 
 import { useState } from "react";
 import { upload } from "@vercel/blob/client";
+import {
+  type DocType,
+  DOC_TYPE_LABELS,
+  DOC_TYPE_ORDER,
+  detectDocType,
+} from "@/lib/doc-types";
 
 type Strategy = "drift" | "renovering" | "vaerdistigning";
 type InputMode = "file" | "url";
+
+interface TaggedFile {
+  file: File;
+  docType: DocType;
+}
 
 const STRATEGIES: Array<{ id: Strategy; label: string; description: string }> =
   [
@@ -31,17 +42,30 @@ const STRATEGIES: Array<{ id: Strategy; label: string; description: string }> =
 export function EvaluatorForm() {
   const [strategy, setStrategy] = useState<Strategy>("drift");
   const [inputMode, setInputMode] = useState<InputMode>("file");
-  const [files, setFiles] = useState<File[]>([]);
+  const [taggedFiles, setTaggedFiles] = useState<TaggedFile[]>([]);
   const [url, setUrl] = useState("");
+  const [askingPriceInput, setAskingPriceInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const fl = e.target.files;
     if (!fl) return;
-    setFiles(Array.from(fl));
+    const tagged = Array.from(fl).map((file) => ({
+      file,
+      docType: detectDocType(file.name),
+    }));
+    setTaggedFiles(tagged);
     setError(null);
   }
+
+  function setDocTypeForFile(idx: number, docType: DocType) {
+    setTaggedFiles((prev) =>
+      prev.map((tf, i) => (i === idx ? { ...tf, docType } : tf)),
+    );
+  }
+
+  const files = taggedFiles.map((t) => t.file);
 
   async function start() {
     if (inputMode === "file" && files.length === 0) {
@@ -72,28 +96,46 @@ export function EvaluatorForm() {
     try {
       let res: Response;
 
+      const askingPriceOverride = askingPriceInput
+        ? parseFloat(askingPriceInput.replace(/[^0-9.,]/g, "").replace(",", "."))
+        : null;
+
       if (inputMode === "file") {
         // Upload alle filer til Vercel Blob via client-side direct upload.
         // Omgår Vercel's 4.5 MB body-limit på serverless functions.
-        const blobs: Array<{ url: string; name: string; size: number }> = [];
-        for (const f of files) {
-          const blob = await upload(`uploads/${Date.now()}-${f.name}`, f, {
-            access: "public",
-            handleUploadUrl: "/api/upload",
+        const blobs: Array<{
+          url: string;
+          name: string;
+          size: number;
+          docType: DocType;
+        }> = [];
+        for (const tf of taggedFiles) {
+          const blob = await upload(
+            `uploads/${Date.now()}-${tf.file.name}`,
+            tf.file,
+            {
+              access: "public",
+              handleUploadUrl: "/api/upload",
+            },
+          );
+          blobs.push({
+            url: blob.url,
+            name: tf.file.name,
+            size: tf.file.size,
+            docType: tf.docType,
           });
-          blobs.push({ url: blob.url, name: f.name, size: f.size });
         }
 
         res = await fetch("/api/evaluate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ strategy, blobs }),
+          body: JSON.stringify({ strategy, blobs, askingPriceOverride }),
         });
       } else {
         res = await fetch("/api/evaluate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ strategy, url }),
+          body: JSON.stringify({ strategy, url, askingPriceOverride }),
         });
       }
 
@@ -185,7 +227,11 @@ export function EvaluatorForm() {
         </div>
 
         {inputMode === "file" ? (
-          <FileDropzone files={files} onChange={onFileChange} />
+          <FileDropzone
+            taggedFiles={taggedFiles}
+            onChange={onFileChange}
+            onTagChange={setDocTypeForFile}
+          />
         ) : (
           <input
             type="url"
@@ -195,6 +241,25 @@ export function EvaluatorForm() {
             className="w-full border border-hairline px-4 py-3 text-[15px] font-serif-body"
           />
         )}
+      </div>
+
+      {/* Valgfri: udbudspris hvis ikke i materialet */}
+      <div className="px-6 sm:px-8 pt-2 pb-6 border-b border-hairline">
+        <label className="block font-mono text-[10px] tracking-[2px] uppercase text-muted mb-2">
+          Udbudspris (valgfri)
+        </label>
+        <input
+          type="text"
+          value={askingPriceInput}
+          onChange={(e) => setAskingPriceInput(e.target.value)}
+          placeholder="fx 12.500.000"
+          className="w-full max-w-sm border border-hairline px-4 py-3 text-[15px] font-serif-body bg-cream"
+          inputMode="numeric"
+        />
+        <p className="font-serif-body text-xs text-muted mt-2 max-w-prose">
+          Hvis prisen ikke står i materialet (fx ved datarum uden
+          salgsopstilling), indtast den her så vi kan lave en cashflow.
+        </p>
       </div>
 
       {/* Start */}
@@ -291,50 +356,76 @@ function ModeButton({
 }
 
 function FileDropzone({
-  files,
+  taggedFiles,
   onChange,
+  onTagChange,
 }: {
-  files: File[];
+  taggedFiles: TaggedFile[];
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onTagChange: (idx: number, docType: DocType) => void;
 }) {
+  if (taggedFiles.length === 0) {
+    return (
+      <label className="block border border-dashed border-hairline hover:border-clay transition-colors p-8 sm:p-12 cursor-pointer text-center bg-cream/40">
+        <input
+          type="file"
+          multiple
+          accept=".pdf,.zip,.xlsx,.xls,.csv"
+          onChange={onChange}
+          className="sr-only"
+        />
+        <div className="font-mono text-[11px] tracking-[2px] uppercase text-clay mb-3">
+          — Træk filer hertil eller klik
+        </div>
+        <p className="font-serif-body text-graphite text-sm">
+          Salgsopstilling (PDF), datarum (zip), Excel-beregning, BBR-udskrift.
+          <br />
+          Op til 100 MB samlet.
+        </p>
+      </label>
+    );
+  }
+
   return (
-    <label className="block border border-dashed border-hairline hover:border-clay transition-colors p-8 sm:p-12 cursor-pointer text-center bg-cream/40">
-      <input
-        type="file"
-        multiple
-        accept=".pdf,.zip,.xlsx,.xls,.csv"
-        onChange={onChange}
-        className="sr-only"
-      />
-      {files.length === 0 ? (
-        <>
-          <div className="font-mono text-[11px] tracking-[2px] uppercase text-clay mb-3">
-            — Træk filer hertil eller klik
-          </div>
-          <p className="font-serif-body text-graphite text-sm">
-            Salgsopstilling (PDF), datarum (zip), Excel-beregning, BBR-udskrift.
-            <br />
-            Op til 50 MB pr. fil.
-          </p>
-        </>
-      ) : (
-        <ul className="text-left max-w-md mx-auto space-y-1">
-          {files.map((f, i) => (
-            <li
-              key={i}
-              className="flex items-center justify-between gap-3 text-sm font-serif-body text-ink"
+    <div className="space-y-3">
+      <ul className="border border-hairline bg-paper divide-y divide-hairline">
+        {taggedFiles.map((tf, i) => (
+          <li
+            key={i}
+            className="flex items-center gap-3 px-4 py-3 flex-wrap sm:flex-nowrap"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-serif-body text-ink truncate">
+                {tf.file.name}
+              </div>
+              <div className="font-mono text-[10px] tracking-[1.5px] uppercase text-muted">
+                {(tf.file.size / 1024 / 1024).toFixed(2)} MB
+              </div>
+            </div>
+            <select
+              value={tf.docType}
+              onChange={(e) => onTagChange(i, e.target.value as DocType)}
+              className="bg-cream border border-hairline px-3 py-2 text-[13px] font-serif-body text-ink focus:outline-none focus:border-clay min-w-[170px]"
             >
-              <span className="truncate">{f.name}</span>
-              <span className="font-mono text-xs text-muted whitespace-nowrap">
-                {(f.size / 1024 / 1024).toFixed(1)} MB
-              </span>
-            </li>
-          ))}
-          <li className="text-[11px] text-clay font-mono tracking-[1.5px] uppercase pt-2">
-            Klik for at ændre
+              {DOC_TYPE_ORDER.map((dt) => (
+                <option key={dt} value={dt}>
+                  {DOC_TYPE_LABELS[dt]}
+                </option>
+              ))}
+            </select>
           </li>
-        </ul>
-      )}
-    </label>
+        ))}
+      </ul>
+      <label className="block border border-dashed border-hairline hover:border-clay transition-colors px-4 py-3 cursor-pointer text-center bg-cream/40 text-clay font-mono text-[11px] tracking-[1.5px] uppercase">
+        <input
+          type="file"
+          multiple
+          accept=".pdf,.zip,.xlsx,.xls,.csv"
+          onChange={onChange}
+          className="sr-only"
+        />
+        + Skift / tilføj flere filer
+      </label>
+    </div>
   );
 }

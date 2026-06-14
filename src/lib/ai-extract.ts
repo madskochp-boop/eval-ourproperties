@@ -7,6 +7,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { PDFDocument } from "pdf-lib";
 import type { PropertyData } from "./types";
+import { type DocType, promptHintFor } from "./doc-types";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -123,6 +124,7 @@ VIGTIGT:
 export async function extractFromPdf(
   buffer: Buffer,
   fileName: string,
+  docType: DocType = "auto",
 ): Promise<PropertyData> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY ikke sat");
@@ -159,7 +161,11 @@ export async function extractFromPdf(
                   data: trimmed.toString("base64"),
                 },
               },
-              { type: "text", text: EXTRACTION_PROMPT },
+              {
+                type: "text",
+                text:
+                  promptHintFor(docType) + "\n\n" + EXTRACTION_PROMPT,
+              },
             ],
           },
         ],

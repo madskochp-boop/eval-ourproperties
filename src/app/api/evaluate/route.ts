@@ -55,11 +55,14 @@ export async function POST(req: NextRequest) {
     let strategy: Strategy = "drift";
     let url: string | null = null;
     let property: PropertyData = { ...EMPTY_PROPERTY };
+    let askingPriceOverride: number | null = null;
 
-    // To input-modes:
-    //   1. application/json med blob-URLs (klienten har uploadet direkte til Blob)
-    //   2. multipart/form-data med files (klienten har sendt filerne via API)
-    type BlobFileRef = { url: string; name: string; size: number };
+    type BlobFileRef = {
+      url: string;
+      name: string;
+      size: number;
+      docType?: string;
+    };
     let blobRefs: BlobFileRef[] = [];
     let inlineFiles: File[] = [];
 
@@ -68,10 +71,12 @@ export async function POST(req: NextRequest) {
         strategy?: Strategy;
         url?: string;
         blobs?: BlobFileRef[];
+        askingPriceOverride?: number | null;
       };
       strategy = body.strategy || "drift";
       url = body.url ?? null;
       blobRefs = body.blobs ?? [];
+      askingPriceOverride = body.askingPriceOverride ?? null;
     } else {
       const form = await req.formData();
       strategy = (form.get("strategy") as Strategy) || "drift";
@@ -79,6 +84,8 @@ export async function POST(req: NextRequest) {
       inlineFiles = form
         .getAll("files")
         .filter((f): f is File => f instanceof File);
+      const priceStr = form.get("askingPriceOverride") as string | null;
+      if (priceStr) askingPriceOverride = parseFloat(priceStr);
     }
 
     // Hent blob-filer som buffere
@@ -86,16 +93,21 @@ export async function POST(req: NextRequest) {
       blobRefs.map(async (b) => {
         const res = await fetch(b.url);
         if (!res.ok) throw new Error(`Kunne ikke hente blob ${b.name}`);
-        return { name: b.name, buffer: Buffer.from(await res.arrayBuffer()) };
+        return {
+          name: b.name,
+          buffer: Buffer.from(await res.arrayBuffer()),
+          docType: b.docType ?? "auto",
+        };
       }),
     );
 
-    const allFiles: Array<{ name: string; buffer: Buffer }> = [
+    const allFiles: Array<{ name: string; buffer: Buffer; docType: string }> = [
       ...blobBuffers,
       ...(await Promise.all(
         inlineFiles.map(async (f) => ({
           name: f.name,
           buffer: Buffer.from(await f.arrayBuffer()),
+          docType: "auto",
         })),
       )),
     ];
@@ -114,10 +126,11 @@ export async function POST(req: NextRequest) {
     }
 
     const fileResults = await Promise.allSettled(
-      allFiles.map(async ({ name, buffer }) => {
+      allFiles.map(async ({ name, buffer, docType }) => {
         const lower = name.toLowerCase();
         if (lower.endsWith(".pdf")) {
-          return extractFromPdf(buffer, name);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return extractFromPdf(buffer, name, docType as any);
         }
         if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".csv")) {
           return extractFromExcel(buffer, name);
@@ -163,6 +176,19 @@ export async function POST(req: NextRequest) {
       seller = enrichment.seller;
     } catch {
       // ignorer makro-fejl
+    }
+
+    // Manuel override hvis udbudspris ikke fandtes i PDF'erne
+    if (
+      (enrichedProperty.askingPrice === null ||
+        enrichedProperty.askingPrice === undefined) &&
+      askingPriceOverride &&
+      askingPriceOverride > 0
+    ) {
+      enrichedProperty = {
+        ...enrichedProperty,
+        askingPrice: askingPriceOverride,
+      };
     }
 
     // Kør strategi-analyse
