@@ -120,6 +120,10 @@ export async function extractFromPdf(
   }
 
   const trimmed = await trimPdf(buffer);
+  console.log(
+    `[ai-extract] ${fileName}: ${(buffer.length / 1024).toFixed(0)}KB → trimmed ${(trimmed.length / 1024).toFixed(0)}KB`,
+  );
+
   if (trimmed.length > MAX_PDF_BYTES) {
     throw new Error(
       `PDF for stor: ${(trimmed.length / 1024 / 1024).toFixed(1)} MB`,
@@ -155,13 +159,29 @@ export async function extractFromPdf(
     );
 
     const block = msg.content[0];
-    if (block.type !== "text") return { ...EMPTY_PROPERTY };
+    if (block.type !== "text") {
+      console.warn(`[ai-extract] ${fileName}: Claude returnerede non-text block`);
+      return { ...EMPTY_PROPERTY, sources: [{ type: "pdf", fileName }] };
+    }
+
+    console.log(
+      `[ai-extract] ${fileName}: Claude svarede ${block.text.length} tegn, første 200: ${block.text.slice(0, 200)}`,
+    );
 
     const jsonMatch = block.text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { ...EMPTY_PROPERTY };
+    if (!jsonMatch) {
+      console.warn(`[ai-extract] ${fileName}: Intet JSON i Claude-svar`);
+      return { ...EMPTY_PROPERTY, sources: [{ type: "pdf", fileName }] };
+    }
 
     try {
       const parsed = JSON.parse(jsonMatch[0]) as Partial<PropertyData>;
+      const nonNullCount = Object.values(parsed).filter(
+        (v) => v !== null && v !== undefined && v !== "" && (Array.isArray(v) ? v.length > 0 : true),
+      ).length;
+      console.log(
+        `[ai-extract] ${fileName}: parsed ${nonNullCount} non-null fields, addr=${parsed.address}, price=${parsed.askingPrice}`,
+      );
       return {
         ...EMPTY_PROPERTY,
         ...parsed,
@@ -169,8 +189,10 @@ export async function extractFromPdf(
         rentalSegments: parsed.rentalSegments ?? [],
         sources: [{ type: "pdf", fileName }],
       };
-    } catch {
-      return { ...EMPTY_PROPERTY };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "JSON parse fejl";
+      console.error(`[ai-extract] ${fileName}: ${msg}, første 500: ${jsonMatch[0].slice(0, 500)}`);
+      return { ...EMPTY_PROPERTY, sources: [{ type: "pdf", fileName }] };
     }
   } finally {
     clearTimeout(timeoutId);

@@ -138,11 +138,14 @@ export async function extractFromZip(
   buffer: Buffer,
   fileName: string,
 ): Promise<PropertyData> {
+  console.log(`[zip] Åbner ${fileName} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
+
   let zip: AdmZip;
   try {
     zip = new AdmZip(buffer);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Ukendt zip-fejl";
+    console.error(`[zip] Kunne ikke åbne zip: ${msg}`);
     return {
       ...EMPTY,
       sources: [{ type: "zip", fileName: `${fileName} (kunne ikke åbnes: ${msg})` }],
@@ -150,6 +153,8 @@ export async function extractFromZip(
   }
 
   const entries = zip.getEntries();
+  console.log(`[zip] ${entries.length} entries fundet`);
+
   if (entries.length === 0) {
     return {
       ...EMPTY,
@@ -157,77 +162,108 @@ export async function extractFromZip(
     };
   }
 
-  let salesProposalEntry: AdmZip.IZipEntry | null = null;
+  // Find ALLE PDF'er — vi parser nu de 3 mest sandsynlige (sales opstilling + bilag)
+  const pdfs = entries
+    .filter((e) => !e.isDirectory && /\.pdf$/i.test(e.entryName))
+    .map((e) => ({
+      entry: e,
+      name: e.entryName,
+      size: e.header.size,
+      // Score: jo højere desto mere sandsynlig salgsopstilling
+      score:
+        (/salgsopstilling|prospekt|prospect|udbud|opstilling/i.test(e.entryName) ? 100 : 0) +
+        (/investerings|udlejnings|presentation/i.test(e.entryName) ? 50 : 0) +
+        (/bbr|tilstand|energi/i.test(e.entryName) ? 30 : 0) +
+        Math.min(20, e.header.size / 100_000), // 1 point pr. 100KB op til 20
+    }))
+    .sort((a, b) => b.score - a.score);
 
-  for (const entry of entries) {
-    if (entry.isDirectory) continue;
-    const name = entry.entryName.toLowerCase();
-    if (!name.endsWith(".pdf")) continue;
+  console.log(
+    `[zip] PDF-kandidater: ${pdfs.length}, top: ${pdfs
+      .slice(0, 5)
+      .map((p) => `${p.name} (${(p.size / 1024).toFixed(0)}KB, score ${p.score.toFixed(0)})`)
+      .join(", ")}`,
+  );
 
-    // Heuristik: ord der ofte findes i salgsopstillinger
-    if (
-      !salesProposalEntry &&
-      /salgsopstilling|prospekt|sale|opstilling|udbud|notice|prospect|udlejnings|investerings/i.test(name)
+  if (pdfs.length === 0) {
+    const fileList = entries
+      .filter((e) => !e.isDirectory)
+      .slice(0, 10)
+      .map((e) => e.entryName)
+      .join(", ");
+    return {
+      ...EMPTY,
+      sources: [
+        {
+          type: "zip",
+          fileName: `${fileName} (ingen PDF fundet i ${entries.length} filer: ${fileList})`,
+        },
+      ],
+    };
+  }
+
+  // Parsér op til 3 PDF'er parallelt — sammenflet resultater
+  const toParse = pdfs.slice(0, 3);
+  const results = await Promise.allSettled(
+    toParse.map(async ({ entry, name }) => {
+      console.log(`[zip] Parser ${name}…`);
+      const pdfBuffer = entry.getData();
+      const data = await extractFromPdf(pdfBuffer, name);
+      console.log(
+        `[zip] ${name}: address=${data.address}, price=${data.askingPrice}, totalRent=${data.totalRent}`,
+      );
+      return { data, name };
+    }),
+  );
+
+  let merged: PropertyData = { ...EMPTY };
+  const parsedNames: string[] = [];
+  const failures: string[] = [];
+
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      merged = mergePdfData(merged, r.value.data);
+      parsedNames.push(r.value.name);
+    } else {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      failures.push(msg);
+      console.error(`[zip] Parse-fejl: ${msg}`);
+    }
+  }
+
+  merged.sources = [
+    {
+      type: "zip",
+      fileName: `${fileName} → ${parsedNames.join(" + ")}${failures.length > 0 ? ` (fejl: ${failures.length})` : ""}`,
+    },
+  ];
+
+  return merged;
+}
+
+// Lokal merge der ikke kalder ai-extract (undgår cirkulær import-risiko)
+function mergePdfData(a: PropertyData, b: PropertyData): PropertyData {
+  const merged: PropertyData = { ...a };
+  for (const key of Object.keys(b) as Array<keyof PropertyData>) {
+    const aVal = a[key];
+    const bVal = b[key];
+    if (key === "notes") {
+      merged.notes = [...(a.notes ?? []), ...(b.notes ?? [])];
+    } else if (key === "rentalSegments") {
+      merged.rentalSegments =
+        (a.rentalSegments?.length ?? 0) > 0 ? a.rentalSegments : (b.rentalSegments ?? []);
+    } else if (key === "sources") {
+      // Bevares — overskrives nedenfor
+    } else if (
+      (aVal === null || aVal === undefined) &&
+      bVal !== null &&
+      bVal !== undefined
     ) {
-      salesProposalEntry = entry;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (merged as any)[key] = bVal;
     }
   }
-
-  // Hvis vi ikke fandt en salgsopstilling, brug den STØRSTE PDF
-  // (salgsopstillinger er typisk de største dokumenter i datarum)
-  if (!salesProposalEntry) {
-    const pdfs = entries.filter(
-      (e) => !e.isDirectory && /\.pdf$/i.test(e.entryName),
-    );
-    if (pdfs.length > 0) {
-      pdfs.sort((a, b) => b.header.size - a.header.size);
-      salesProposalEntry = pdfs[0];
-    }
-  }
-
-  if (!salesProposalEntry) {
-    return {
-      ...EMPTY,
-      sources: [
-        { type: "zip", fileName: `${fileName} (ingen PDF fundet — pakkede filer: ${entries.length})` },
-      ],
-    };
-  }
-
-  let pdfBuffer: Buffer;
-  try {
-    pdfBuffer = salesProposalEntry.getData();
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Ukendt fejl";
-    return {
-      ...EMPTY,
-      sources: [
-        {
-          type: "zip",
-          fileName: `${fileName} → ${salesProposalEntry.entryName} (kunne ikke læses: ${msg})`,
-        },
-      ],
-    };
-  }
-
-  try {
-    const data = await extractFromPdf(pdfBuffer, salesProposalEntry.entryName);
-    data.sources = [
-      { type: "zip", fileName: `${fileName} → ${salesProposalEntry.entryName}` },
-    ];
-    return data;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Ukendt AI-fejl";
-    return {
-      ...EMPTY,
-      sources: [
-        {
-          type: "zip",
-          fileName: `${fileName} → ${salesProposalEntry.entryName} (AI-parse fejl: ${msg})`,
-        },
-      ],
-    };
-  }
+  return merged;
 }
 
 // ─── URL-fetcher ───────────────────────────────────

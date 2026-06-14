@@ -65,6 +65,23 @@ export function ReportClient({ evalResult }: { evalResult: EvaluationResult }) {
     }
   }
 
+  // Tæl antal felter med data
+  const dataFields = [
+    property.address,
+    property.askingPrice,
+    property.totalRent,
+    property.totalArea,
+    property.buildingYear,
+    property.numUnits,
+    property.energyLabel,
+    property.publicValuation,
+    property.operatingCosts,
+    property.propertyType,
+  ];
+  const filledFields = dataFields.filter((v) => v !== null && v !== undefined).length;
+  const dataQuality =
+    filledFields >= 7 ? "fuld" : filledFields >= 4 ? "delvis" : "sparsom";
+
   return (
     <main className="min-h-screen">
       <header className="px-4 sm:px-8 lg:px-12 pt-8 pb-6 border-b border-hairline">
@@ -81,6 +98,28 @@ export function ReportClient({ evalResult }: { evalResult: EvaluationResult }) {
           </a>
         </div>
       </header>
+
+      {/* Data-kvalitet alarm */}
+      {dataQuality !== "fuld" && (
+        <div className={`px-4 sm:px-8 lg:px-12 py-3 border-b ${dataQuality === "sparsom" ? "bg-oxblood/5 border-oxblood/30" : "bg-warning/5 border-warning/30"}`}>
+          <div className="max-w-5xl mx-auto flex items-baseline justify-between gap-4 flex-wrap">
+            <div>
+              <span className="font-mono text-[10px] tracking-[2px] uppercase mr-3 font-semibold text-clay">
+                {dataQuality === "sparsom" ? "Sparsom data" : "Delvis data"}
+              </span>
+              <span className="font-serif-body text-sm text-graphite">
+                {filledFields} af 10 nøglefelter blev parsed.{" "}
+                {dataQuality === "sparsom"
+                  ? "PDF'en er muligvis scannet eller billede-baseret — prøv at uploade salgsopstillingen separat, eller indtast detaljer manuelt."
+                  : "Mange felter mangler — supplér gerne med et link til boligsiden."}
+              </span>
+            </div>
+            <a href="/" className="font-mono text-[10px] tracking-[1.5px] uppercase text-clay hover:text-ink">
+              Prøv igen →
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Hero */}
       <section className="px-4 sm:px-8 lg:px-12 pt-14 sm:pt-20 pb-10">
