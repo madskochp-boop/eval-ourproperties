@@ -64,7 +64,16 @@ const EMPTY_PROPERTY: PropertyData = {
   sources: [],
 };
 
-const EXTRACTION_PROMPT = `Udtræk fra denne danske salgsopstilling for en ejendomsinvestering og returnér KUN gyldig JSON i præcis dette format:
+const EXTRACTION_PROMPT = `Du modtager et dansk ejendomsdokument. Det kan være EN AF:
+- Salgsopstilling / prospekt
+- Lejeliste / huslejeliste / Areal- og fordelingstal
+- Offentlig vurdering / ejendomsvurdering
+- Tingbogsattest
+- BBR-meddelelse
+- Energimærke
+- Et bilag fra datarum
+
+Udtræk ALT relevant data og returnér KUN gyldig JSON i præcis dette format:
 
 {
   "address": string|null,
@@ -100,15 +109,15 @@ const EXTRACTION_PROMPT = `Udtræk fra denne danske salgsopstilling for en ejend
   "sellerCvr": string|null
 }
 
-Regler:
-- ALLE beløb i danske kroner (DKK), uden punktum eller mellemrum.
-- totalRent = ÅRLIG samlet leje. monthlyRent = MÅNEDLIG samlet leje.
-- yieldStated = sælgers angivne afkast i %, fx 5.2.
-- vacancyRate = aktuel tomgangsprocent i %, fx 3.5.
-- propertyType: "udlejningsejendom", "blandet bolig/erhverv", "erhverv", "bolig", etc.
-- municipality = kommunen, fx "København", "Roskilde", "Aarhus".
-- notes = liste af KORTE bullet-points med potentialer eller særlige forhold (fx "Potentiale for taglejligheder", "Nyere tag fra 2018", "Lokalplan tillader yderligere etage").
-- rentalSegments = liste af lejemålene (fx alle lejemål i en udlejningsejendom). Inkluder altid hvis tilgængeligt.
+VIGTIGT:
+- Hvis dokumentet er en LEJELISTE: udfyld rentalSegments med ÉN linje pr. lejemål. Sum alle årslejer og sæt det i totalRent (ekskl. varme/vand acconto). Tæl antal lejemål og sæt i numUnits. Sum areal i totalArea. Find sælger-firma-navn i header og sæt i sellerName.
+- Hvis dokumentet er en OFFENTLIG VURDERING: udfyld publicValuation. Hent også adresse, areal, byggeår hvis muligt.
+- Hvis dokumentet er en TINGBOGSATTEST: hent ejer (sellerName) og evt. matrikel-info. CVR hvis det er et selskab.
+- Hvis det er en SALGSOPSTILLING: udfyld så meget som muligt.
+- ALLE beløb i DKK uden punktum eller mellemrum. Brug årsbeløb (ikke månedlige) til totalRent.
+- For lejeliste: hvis du ser kolonner "Leje", "A/C Varme", "A/c vand" → KUN selve Leje-tallet skal med i monthlyRent/totalRent (ikke varme/vand).
+- rentalSegments.monthlyRent skal være MÅNEDLIG (totalRent på lejeliste er typisk årlig — divider med 12 hvis nødvendigt for hver linje).
+- "type" i rentalSegments: "bolig", "erhverv", "kælder", "p-plads" osv. (afled fra "Kategori" eller "Leje bolig"/"Leje erhverv").
 - Returnér null hvor data ikke findes — gæt IKKE.`;
 
 export async function extractFromPdf(

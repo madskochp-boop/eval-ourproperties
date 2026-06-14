@@ -5,6 +5,7 @@ import {
   extractFromZip,
   extractFromUrl,
 } from "@/lib/parsers";
+import { extractFromFilename } from "@/lib/filename-extract";
 import { enrichWithMacro } from "@/lib/macro";
 import { runStrategyAnalysis, detectRisks, calcScore } from "@/lib/strategies";
 import { saveEvaluation, makeId } from "@/lib/store";
@@ -98,6 +99,19 @@ export async function POST(req: NextRequest) {
         })),
       )),
     ];
+
+    // Filename-baseret pre-extraction: zip-filer hedder typisk
+    // "Ramsherred 16, 4700 Næstved.zip" og giver adresse gratis.
+    for (const f of allFiles) {
+      const fromName = extractFromFilename(f.name);
+      property = mergePropertyData(property, {
+        ...property,
+        ...fromName,
+        notes: [],
+        rentalSegments: [],
+        sources: [],
+      } as PropertyData);
+    }
 
     const fileResults = await Promise.allSettled(
       allFiles.map(async ({ name, buffer }) => {

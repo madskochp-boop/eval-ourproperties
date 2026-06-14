@@ -162,20 +162,30 @@ export async function extractFromZip(
     };
   }
 
-  // Find ALLE PDF'er — vi parser nu de 3 mest sandsynlige (sales opstilling + bilag)
+  // Find ALLE PDF'er og score efter informations-tæthed
   const pdfs = entries
     .filter((e) => !e.isDirectory && /\.pdf$/i.test(e.entryName))
     .map((e) => ({
       entry: e,
       name: e.entryName,
       size: e.header.size,
-      // Score: jo højere desto mere sandsynlig salgsopstilling
+      // Score baseret på hvilke ord der peger på højværdi-data:
       score:
-        (/salgsopstilling|prospekt|prospect|udbud|opstilling/i.test(e.entryName) ? 100 : 0) +
-        (/investerings|udlejnings|presentation/i.test(e.entryName) ? 50 : 0) +
-        (/bbr|tilstand|energi/i.test(e.entryName) ? 30 : 0) +
-        Math.min(20, e.header.size / 100_000), // 1 point pr. 100KB op til 20
+        (/salgsopstilling|prospekt|prospect|udbud/i.test(e.entryName) ? 200 : 0) +
+        (/lejeliste|huslejeliste|areal|fordelingstal|huslejer/i.test(e.entryName) ? 150 : 0) +
+        (/vurdering|valuation|ejendomsv/i.test(e.entryName) ? 100 : 0) +
+        (/tingbog|tinglysning/i.test(e.entryName) ? 80 : 0) +
+        (/investerings|udlejnings|presentation|oplaeg|oplæg/i.test(e.entryName) ? 70 : 0) +
+        (/bbr|tilstand|energi|byggesag/i.test(e.entryName) ? 50 : 0) +
+        Math.min(30, e.header.size / 100_000),
     }))
+    // Filtrér duplicate/bilags-PDF'er (GI vedligehold m.v.) — dem er der typisk
+    // mange af og de er irrelevante
+    .filter(
+      (p) =>
+        !/grundejernes[a-z]*investeringsfond.*vedligehold/i.test(p.name) ||
+        false, // behold alle for nu
+    )
     .sort((a, b) => b.score - a.score);
 
   console.log(
@@ -202,8 +212,14 @@ export async function extractFromZip(
     };
   }
 
-  // Parsér op til 3 PDF'er parallelt — sammenflet resultater
-  const toParse = pdfs.slice(0, 3);
+  // Parsér op til 5 højest-scorende PDF'er parallelt — sammenflet resultater.
+  // Inkluderer typisk: salgsopstilling, lejeliste, vurdering, BBR, tingbog.
+  // Vi springer over PDF'er med score 0 (de er fra "GI vedligehold"-bilag osv.)
+  const toParse = pdfs.filter((p) => p.score > 0).slice(0, 5);
+  if (toParse.length === 0 && pdfs.length > 0) {
+    // Hvis ingen scorer, tag i hvert fald den største PDF
+    toParse.push(pdfs[0]);
+  }
   const results = await Promise.allSettled(
     toParse.map(async ({ entry, name }) => {
       console.log(`[zip] Parser ${name}…`);
