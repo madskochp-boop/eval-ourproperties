@@ -1,0 +1,107 @@
+/*
+ * eval.ourproperties.dk — CVI tokens
+ * Samme system som hovedappen så branding er konsistent.
+ */
+
+@import "tailwindcss";
+
+@theme inline {
+  /* Base surfaces */
+  --color-cream:    #f5efe4;
+  --color-bone:     #eeeae3;
+  --color-paper:    #fbf8f1;
+
+  /* Text */
+  --color-ink:      #1d1914;
+  --color-graphite: #3a342c;
+  --color-muted:    #6b6257;
+  --color-hairline: #d4cdbd;
+
+  /* Brand accent — Our Properties = clay */
+  --color-clay:     #8a5a3a;
+  --color-clay-alt: #a87858;
+  --color-sage:     #3f473b;
+  --color-oxblood:  #8a3a2a;
+  --color-gold:     #8a5a3a;
+
+  /* Status */
+  --color-danger:   #b84430;
+  --color-success:  #5a6553;
+  --color-warning:  #c7a062;
+
+  /* Typography */
+  --font-heading:  var(--font-playfair);
+  --font-serif:    var(--font-spectral);
+  --font-sans:     var(--font-inter);
+  --font-mono:     var(--font-jetbrains-mono);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans), -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading), Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.font-serif-body {
+  font-family: var(--font-serif), Georgia, serif;
+}
+
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* CVI-styled form-elementer */
+input[type="checkbox"]:not(.sr-only),
+input[type="radio"]:not(.sr-only) {
+  accent-color: var(--color-ink);
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--color-hairline);
+  background: var(--color-bone);
+}
+input[type="radio"]:not(.sr-only) {
+  border-radius: 50%;
+}
+
+select:not(.sr-only) {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M1%201l4%204%204-4%22%20stroke%3D%22%23999%22%20fill%3D%22none%22%20stroke-width%3D%221.2%22/%3E%3C/svg%3E");
+  background-position: right 0.85rem center;
+  background-repeat: no-repeat;
+  padding-right: 2.5rem;
+}
+
+input[type="text"]:not([class*="bg-"]),
+input[type="email"]:not([class*="bg-"]),
+input[type="url"]:not([class*="bg-"]),
+input[type="number"]:not([class*="bg-"]),
+textarea:not([class*="bg-"]),
+select:not([class*="bg-"]) {
+  background-color: var(--color-cream);
+}
+
+input:focus:not(.sr-only),
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--color-clay) !important;
+}
+
+.wordmark { display: inline-flex; align-items: baseline; line-height: 0.95; letter-spacing: -0.02em; }
+.wordmark b { font-family: var(--font-heading), Georgia, serif; font-weight: 900; font-style: normal; }
+.wordmark i { font-family: var(--font-heading), Georgia, serif; font-weight: 400; font-style: italic; margin-left: 0.05em; }
