@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { upload } from "@vercel/blob/client";
 
 type Strategy = "drift" | "renovering" | "vaerdistigning";
 type InputMode = "file" | "url";
@@ -69,15 +70,32 @@ export function EvaluatorForm() {
     setBusy(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.append("strategy", strategy);
-      if (inputMode === "file") {
-        files.forEach((f) => form.append("files", f));
-      } else {
-        form.append("url", url);
-      }
+      let res: Response;
 
-      const res = await fetch("/api/evaluate", { method: "POST", body: form });
+      if (inputMode === "file") {
+        // Upload alle filer til Vercel Blob via client-side direct upload.
+        // Omgår Vercel's 4.5 MB body-limit på serverless functions.
+        const blobs: Array<{ url: string; name: string; size: number }> = [];
+        for (const f of files) {
+          const blob = await upload(`uploads/${Date.now()}-${f.name}`, f, {
+            access: "public",
+            handleUploadUrl: "/api/upload",
+          });
+          blobs.push({ url: blob.url, name: f.name, size: f.size });
+        }
+
+        res = await fetch("/api/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ strategy, blobs }),
+        });
+      } else {
+        res = await fetch("/api/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ strategy, url }),
+        });
+      }
 
       // Vis konkret HTTP-fejl hvis muligt
       if (res.status === 413) {

@@ -50,30 +50,66 @@ const EMPTY_PROPERTY: PropertyData = {
 
 export async function POST(req: NextRequest) {
   try {
-    const form = await req.formData();
-    const strategy = (form.get("strategy") as Strategy) || "drift";
-    const url = form.get("url") as string | null;
-
-    // Saml input-data fra alle kilder
+    const contentType = req.headers.get("content-type") || "";
+    let strategy: Strategy = "drift";
+    let url: string | null = null;
     let property: PropertyData = { ...EMPTY_PROPERTY };
 
-    // Parsér uploadede filer parallelt
-    const fileEntries = form.getAll("files").filter(
-      (f): f is File => f instanceof File,
+    // To input-modes:
+    //   1. application/json med blob-URLs (klienten har uploadet direkte til Blob)
+    //   2. multipart/form-data med files (klienten har sendt filerne via API)
+    type BlobFileRef = { url: string; name: string; size: number };
+    let blobRefs: BlobFileRef[] = [];
+    let inlineFiles: File[] = [];
+
+    if (contentType.includes("application/json")) {
+      const body = (await req.json()) as {
+        strategy?: Strategy;
+        url?: string;
+        blobs?: BlobFileRef[];
+      };
+      strategy = body.strategy || "drift";
+      url = body.url ?? null;
+      blobRefs = body.blobs ?? [];
+    } else {
+      const form = await req.formData();
+      strategy = (form.get("strategy") as Strategy) || "drift";
+      url = form.get("url") as string | null;
+      inlineFiles = form
+        .getAll("files")
+        .filter((f): f is File => f instanceof File);
+    }
+
+    // Hent blob-filer som buffere
+    const blobBuffers = await Promise.all(
+      blobRefs.map(async (b) => {
+        const res = await fetch(b.url);
+        if (!res.ok) throw new Error(`Kunne ikke hente blob ${b.name}`);
+        return { name: b.name, buffer: Buffer.from(await res.arrayBuffer()) };
+      }),
     );
 
+    const allFiles: Array<{ name: string; buffer: Buffer }> = [
+      ...blobBuffers,
+      ...(await Promise.all(
+        inlineFiles.map(async (f) => ({
+          name: f.name,
+          buffer: Buffer.from(await f.arrayBuffer()),
+        })),
+      )),
+    ];
+
     const fileResults = await Promise.allSettled(
-      fileEntries.map(async (file) => {
-        const buffer = Buffer.from(await file.arrayBuffer());
-        const name = file.name.toLowerCase();
-        if (name.endsWith(".pdf")) {
-          return extractFromPdf(buffer, file.name);
+      allFiles.map(async ({ name, buffer }) => {
+        const lower = name.toLowerCase();
+        if (lower.endsWith(".pdf")) {
+          return extractFromPdf(buffer, name);
         }
-        if (name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".csv")) {
-          return extractFromExcel(buffer, file.name);
+        if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".csv")) {
+          return extractFromExcel(buffer, name);
         }
-        if (name.endsWith(".zip")) {
-          return extractFromZip(buffer, file.name);
+        if (lower.endsWith(".zip")) {
+          return extractFromZip(buffer, name);
         }
         return null;
       }),
@@ -133,7 +169,7 @@ export async function POST(req: NextRequest) {
       score,
     };
 
-    saveEvaluation(result);
+    await saveEvaluation(result);
     return NextResponse.json({ id });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Ukendt fejl";

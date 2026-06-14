@@ -8,7 +8,7 @@ export default async function ReportPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const evalResult = getEvaluation(id);
+  const evalResult = await getEvaluation(id);
   if (!evalResult) notFound();
   return <ReportClient evalResult={evalResult} />;
 }

@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string; format: string }> },
 ) {
   const { id, format } = await params;
-  const evalResult = getEvaluation(id);
+  const evalResult = await getEvaluation(id);
   if (!evalResult) {
     return NextResponse.json(
       { error: "Evaluering ikke fundet (in-memory store nulstilles ved deploy)" },
