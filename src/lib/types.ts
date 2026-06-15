@@ -2,6 +2,36 @@
 
 export type Strategy = "drift" | "renovering" | "vaerdistigning" | "privat";
 
+export interface FinancingInputs {
+  // Brugerens egne input — alle valgfri, vi har default-værdier
+  downPaymentKr: number | null; // udbetaling i kr
+  downPaymentPct: number | null; // ELLER udbetaling i %
+  realkreditPct: number | null; // hvor stor del af lånet er realkredit (default 80%)
+  realkreditRate: number | null; // fast rente på realkredit % (default 5.25)
+  realkreditType: "fast" | "variabel" | "f5" | null; // default fast
+  realkreditAfdragsfri: number | null; // antal år afdragsfri (0-10)
+  bankLoanKr: number | null; // separat banklån/ejerpantebrev
+  bankLoanRate: number | null; // rente på banklån (default 7-8%)
+  familyLoanKr: number | null; // anfordringslån fra familie/holding
+  familyLoanRate: number | null; // rente (kan være lav, 0-2%)
+  bankName: string | null; // fx "Vestjysk Bank", "Jyske", "Realkredit Danmark"
+  notes: string | null;
+}
+
+export interface FinancingResult {
+  totalLoan: number;
+  downPayment: number;
+  ltv: number; // loan-to-value %
+  monthlyPayment: number; // samlet månedlig ydelse på alle lån
+  yearlyDebtService: number;
+  interestYearOne: number;
+  principalYearOne: number;
+  // Bank-vurdering
+  debtServiceCoverageRatio: number | null; // NOI / ydelse (kun for udlejning)
+  bankableScore: "stærk" | "ok" | "stram" | "kritisk";
+  bankableNotes: string[];
+}
+
 export interface PropertyData {
   // ─── Adressering ────────────────────────
   address: string | null;
@@ -224,6 +254,7 @@ export interface EvaluationResult {
   macro: MacroData | null;
   seller: SellerCvrData | null;
   analysis: StrategyAnalysis;
+  financing: FinancingResult | null;
   risks: RiskFlag[];
   score: OverallScore;
 }

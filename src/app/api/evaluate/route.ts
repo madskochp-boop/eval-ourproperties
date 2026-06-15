@@ -10,11 +10,13 @@ import { enrichWithMacro } from "@/lib/macro";
 import { runStrategyAnalysis, detectRisks, calcScore } from "@/lib/strategies";
 import { saveEvaluation, makeId } from "@/lib/store";
 import { analyzeImages, mediaTypeFromName } from "@/lib/image-analysis";
+import { calcFinancing } from "@/lib/financing";
 import type {
   PropertyData,
   Strategy,
   EvaluationResult,
   RoomCondition,
+  FinancingInputs,
 } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -62,6 +64,7 @@ export async function POST(req: NextRequest) {
     let url: string | null = null;
     let property: PropertyData = { ...EMPTY_PROPERTY };
     let askingPriceOverride: number | null = null;
+    let financingInputs: FinancingInputs | null = null;
 
     type BlobFileRef = {
       url: string;
@@ -78,11 +81,13 @@ export async function POST(req: NextRequest) {
         url?: string;
         blobs?: BlobFileRef[];
         askingPriceOverride?: number | null;
+        financing?: FinancingInputs;
       };
       strategy = body.strategy || "drift";
       url = body.url ?? null;
       blobRefs = body.blobs ?? [];
       askingPriceOverride = body.askingPriceOverride ?? null;
+      financingInputs = body.financing ?? null;
     } else {
       const form = await req.formData();
       strategy = (form.get("strategy") as Strategy) || "drift";
@@ -250,6 +255,16 @@ export async function POST(req: NextRequest) {
       strategy,
       imageAnalysis,
     );
+
+    // Beregn finansiering
+    const noi =
+      analysis.type === "drift" ? analysis.netOperatingIncome : null;
+    const financing = calcFinancing(
+      enrichedProperty.askingPrice ?? 0,
+      noi,
+      financingInputs,
+    );
+
     const risks = detectRisks(enrichedProperty, macro, analysis);
     const score = calcScore(enrichedProperty, analysis, risks);
 
@@ -262,6 +277,7 @@ export async function POST(req: NextRequest) {
       macro,
       seller,
       analysis,
+      financing,
       risks,
       score,
     };

@@ -10,6 +10,7 @@ import type {
   RiskFlag,
   RoomCondition,
   NegotiationLever,
+  FinancingResult,
 } from "@/lib/types";
 
 function fmtKr(n: number | null | undefined): string {
@@ -40,7 +41,7 @@ const RECOMMENDATION_TONES: Record<string, string> = {
 };
 
 export function ReportClient({ evalResult }: { evalResult: EvaluationResult }) {
-  const { property, strategy, score, createdAt, analysis, macro, seller, risks, id } =
+  const { property, strategy, score, createdAt, analysis, macro, seller, risks, id, financing } =
     evalResult;
   const [downloading, setDownloading] = useState<"excel" | "pptx" | null>(null);
 
@@ -224,6 +225,18 @@ export function ReportClient({ evalResult }: { evalResult: EvaluationResult }) {
           )}
         </div>
       </section>
+
+      {/* Finansiering */}
+      {financing && (
+        <section className="px-4 sm:px-8 lg:px-12 pb-16">
+          <div className="max-w-5xl mx-auto">
+            <h2 className="font-heading text-2xl text-ink mb-5">
+              Finansiering & bank-vurdering
+            </h2>
+            <FinancingSection f={financing} />
+          </div>
+        </section>
+      )}
 
       {/* Risici */}
       {risks.length > 0 && (
@@ -554,6 +567,75 @@ function RenoveringSection({ a }: { a: RenoveringAnalysis }) {
         <DetailRow label="Brutto-fortjeneste" value={fmtKr(a.grossProfit)} />
         <DetailRow label="Break-even salgspris" value={fmtKr(a.breakEvenSalePrice)} />
       </div>
+    </>
+  );
+}
+
+function FinancingSection({ f }: { f: FinancingResult }) {
+  const scoreTone =
+    f.bankableScore === "stærk"
+      ? "text-sage"
+      : f.bankableScore === "ok"
+        ? "text-ink"
+        : f.bankableScore === "stram"
+          ? "text-warning"
+          : "text-oxblood";
+  const scoreLabel =
+    f.bankableScore === "stærk"
+      ? "Stærk case"
+      : f.bankableScore === "ok"
+        ? "OK"
+        : f.bankableScore === "stram"
+          ? "Stram"
+          : "Kritisk";
+  return (
+    <>
+      <div className="border border-hairline bg-paper grid grid-cols-2 md:grid-cols-4 mb-6">
+        <Stat label="Total lån" value={fmtKr(f.totalLoan)} />
+        <Stat label="Udbetaling" value={fmtKr(f.downPayment)} />
+        <Stat label="LTV" value={`${f.ltv.toFixed(0)} %`} />
+        <Stat
+          label="Bank-vurdering"
+          value={scoreLabel}
+        />
+      </div>
+      <div className="border border-hairline bg-paper grid grid-cols-2 md:grid-cols-4 mb-6">
+        <Stat label="Månedlig ydelse" value={fmtKr(f.monthlyPayment)} />
+        <Stat label="Årlig ydelse" value={fmtKr(f.yearlyDebtService)} />
+        <Stat label="Rente år 1" value={fmtKr(f.interestYearOne)} />
+        <Stat label="Afdrag år 1" value={fmtKr(f.principalYearOne)} />
+      </div>
+      {f.debtServiceCoverageRatio !== null && (
+        <div className="border border-hairline bg-cream/40 p-5 mb-6">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <div className="font-mono text-[10px] tracking-[2px] uppercase text-muted mb-1">
+                Gældsservice-grad (DSCR)
+              </div>
+              <div className={`font-heading text-3xl tabular-nums ${scoreTone}`}>
+                {f.debtServiceCoverageRatio.toFixed(2)}×
+              </div>
+            </div>
+            <div className="text-xs text-graphite font-serif-body max-w-md">
+              Driftens overskud (NOI) divideret med årlig ydelse. Bankerne
+              ønsker typisk minimum <strong>1,20×</strong> for udlejnings-
+              ejendomme. Under 1,0× betyder driften ikke kan dække ydelsen.
+            </div>
+          </div>
+        </div>
+      )}
+      {f.bankableNotes.length > 0 && (
+        <ul className="space-y-2">
+          {f.bankableNotes.map((n, i) => (
+            <li
+              key={i}
+              className="border border-hairline bg-paper px-5 py-3 text-sm font-serif-body text-ink leading-relaxed pl-5 border-l-2 border-l-clay/40"
+            >
+              {n}
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
 }
