@@ -6,7 +6,10 @@ import type {
   DriftAnalysis,
   RenoveringAnalysis,
   VaerdistigningAnalysis,
+  PrivatAnalysis,
   RiskFlag,
+  RoomCondition,
+  NegotiationLever,
 } from "@/lib/types";
 
 function fmtKr(n: number | null | undefined): string {
@@ -26,6 +29,7 @@ const STRATEGY_LABELS = {
   drift: "Høj afkast i drift",
   renovering: "Renoveringscase til flipping",
   vaerdistigning: "Værdistigning over tid",
+  privat: "Privat bolig",
 };
 
 const RECOMMENDATION_TONES: Record<string, string> = {
@@ -214,6 +218,9 @@ export function ReportClient({ evalResult }: { evalResult: EvaluationResult }) {
           {analysis.type === "renovering" && <RenoveringSection a={analysis} />}
           {analysis.type === "vaerdistigning" && (
             <VaerdistigningSection a={analysis} />
+          )}
+          {analysis.type === "privat" && (
+            <PrivatSection a={analysis} city={property.city} municipality={property.municipality} />
           )}
         </div>
       </section>
@@ -548,6 +555,209 @@ function RenoveringSection({ a }: { a: RenoveringAnalysis }) {
         <DetailRow label="Break-even salgspris" value={fmtKr(a.breakEvenSalePrice)} />
       </div>
     </>
+  );
+}
+
+function PrivatSection({
+  a,
+  city,
+  municipality,
+}: {
+  a: PrivatAnalysis;
+  city: string | null;
+  municipality: string | null;
+}) {
+  const place = municipality ?? city ?? "kommunen";
+  return (
+    <>
+      {/* Top-tal: pris vs. marked */}
+      <div className="border border-hairline bg-paper grid grid-cols-2 md:grid-cols-4 mb-6">
+        <Stat label="Pris pr. m²" value={fmtKr(a.pricePerSqm)} />
+        <Stat
+          label={`Marked (${place})`}
+          value={
+            a.avgSqmPriceMunicipality !== null
+              ? fmtKr(a.avgSqmPriceMunicipality)
+              : "—"
+          }
+        />
+        <Stat
+          label="Over/under marked"
+          value={
+            a.avgSqmPriceMunicipality !== null
+              ? `${a.premiumVsMarket >= 0 ? "+" : ""}${a.premiumVsMarket.toFixed(1)} %`
+              : "—"
+          }
+        />
+        <Stat label="Bolig-areal" value={fmtNum(a.area, " m²")} />
+      </div>
+
+      {/* Stand-vurdering */}
+      <h3 className="font-heading text-xl text-ink mb-3 mt-8">Stand pr. rum</h3>
+      {a.rooms.length === 0 ? (
+        <div className="border border-dashed border-hairline bg-bone p-5 text-sm text-graphite font-serif-body">
+          Ingen billeder uploadet — eller billed-analyse kunne ikke køres.
+          Upload billeder af køkken, bad, gulv, vinduer, facade osv. for at få
+          konkrete forhandlings-argumenter.
+        </div>
+      ) : (
+        <div className="border border-hairline bg-paper divide-y divide-hairline">
+          {a.rooms.map((r, i) => (
+            <RoomRow key={i} room={r} />
+          ))}
+        </div>
+      )}
+
+      {/* Forhandlings-anbefaling */}
+      <div className="mt-8 border border-clay/40 bg-clay/5 p-6">
+        <div className="font-mono text-[10px] tracking-[2px] uppercase text-clay font-semibold mb-3">
+          — Anbefalet bud
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div>
+            <div className="font-mono text-[10px] tracking-[1.5px] uppercase text-muted mb-1">
+              Udbudspris
+            </div>
+            <div className="font-heading text-2xl text-ink tabular-nums">
+              {fmtKr(a.purchasePrice)}
+            </div>
+          </div>
+          <div>
+            <div className="font-mono text-[10px] tracking-[1.5px] uppercase text-muted mb-1">
+              Foreslået startbud
+            </div>
+            <div className="font-heading text-3xl text-clay tabular-nums">
+              {fmtKr(a.suggestedOffer)}
+            </div>
+            <div className="text-xs text-graphite mt-1">
+              {(
+                ((a.suggestedOffer - a.purchasePrice) / a.purchasePrice) *
+                100
+              ).toFixed(1)}{" "}
+              % under udbudspris
+            </div>
+          </div>
+          <div>
+            <div className="font-mono text-[10px] tracking-[1.5px] uppercase text-muted mb-1">
+              Max anbefalet
+            </div>
+            <div className="font-heading text-2xl text-ink tabular-nums">
+              {fmtKr(a.maxRecommendedPrice)}
+            </div>
+          </div>
+        </div>
+        {a.totalRenovationEstimate > 0 && (
+          <div className="mt-5 pt-5 border-t border-clay/30 grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <span className="text-muted">Renoverings-estimat: </span>
+              <span className="font-mono tabular-nums text-ink">
+                {fmtKr(a.totalRenovationEstimate)}
+              </span>
+            </div>
+            <div>
+              <span className="text-muted">Total efter reno: </span>
+              <span className="font-mono tabular-nums text-ink">
+                {fmtKr(a.totalCostIncludingReno)}
+              </span>
+            </div>
+            <div>
+              <span className="text-muted">Effektiv m²-pris: </span>
+              <span className="font-mono tabular-nums text-ink">
+                {fmtKr(a.effectiveSqmPriceAfterReno)}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Forhandlings-håndtag */}
+      <h3 className="font-heading text-xl text-ink mb-3 mt-10">
+        Forhandlings-håndtag
+      </h3>
+      <ul className="space-y-3">
+        {a.negotiationLevers.map((lever, i) => (
+          <NegotiationRow key={i} lever={lever} />
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function RoomRow({ room }: { room: RoomCondition }) {
+  const toneClass =
+    room.condition === "kritisk"
+      ? "text-oxblood"
+      : room.condition === "slidt"
+        ? "text-warning"
+        : room.condition === "ok"
+          ? "text-graphite"
+          : "text-clay";
+  return (
+    <div className="px-5 py-4">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-2">
+        <div>
+          <span className="font-heading text-lg text-ink mr-3">
+            {room.room}
+          </span>
+          <span
+            className={`font-mono text-[10px] tracking-[2px] uppercase font-semibold ${toneClass}`}
+          >
+            {room.condition === "ny"
+              ? "Ny"
+              : room.condition === "god"
+                ? "God"
+                : room.condition === "ok"
+                  ? "OK"
+                  : room.condition === "slidt"
+                    ? "Slidt"
+                    : "Kritisk"}
+          </span>
+          {room.estimatedAge && (
+            <span className="font-mono text-[10px] tracking-[1.5px] uppercase text-muted ml-3">
+              {room.estimatedAge}
+            </span>
+          )}
+        </div>
+        {room.renovationCostEstimate !== null &&
+          room.renovationCostEstimate > 0 && (
+            <span className="font-mono text-sm text-ink tabular-nums">
+              Reno: {fmtKr(room.renovationCostEstimate)}
+            </span>
+          )}
+      </div>
+      {room.observations.length > 0 && (
+        <ul className="text-sm text-graphite font-serif-body space-y-1 mt-1">
+          {room.observations.map((o, i) => (
+            <li key={i} className="pl-4 border-l-2 border-clay/30">
+              {o}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function NegotiationRow({ lever }: { lever: NegotiationLever }) {
+  return (
+    <li className="border border-hairline bg-paper p-5">
+      <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
+        <div>
+          <span className="font-mono text-[10px] tracking-[2px] uppercase text-clay font-semibold mr-3">
+            {lever.category}
+          </span>
+          <span className="font-heading text-base text-ink">{lever.title}</span>
+        </div>
+        {lever.potentialDiscount !== null && lever.potentialDiscount > 0 && (
+          <span className="font-mono text-sm text-clay tabular-nums whitespace-nowrap">
+            ↓ {fmtKr(lever.potentialDiscount)}
+          </span>
+        )}
+      </div>
+      <p className="font-serif-body text-sm text-graphite leading-relaxed">
+        {lever.argument}
+      </p>
+    </li>
   );
 }
 

@@ -22,6 +22,9 @@ import type {
   DriftAnalysis,
   RenoveringAnalysis,
   VaerdistigningAnalysis,
+  PrivatAnalysis,
+  RoomCondition,
+  NegotiationLever,
   StrategyAnalysis,
   RiskFlag,
   OverallScore,
@@ -393,6 +396,12 @@ export function calcScore(
   let fit = 70;
 
   // Economics
+  if (analysis.type === "privat") {
+    if (analysis.premiumVsMarket > 15) economics = 25;
+    else if (analysis.premiumVsMarket > 5) economics = 50;
+    else if (analysis.premiumVsMarket > -5) economics = 75;
+    else economics = 85;
+  }
   if (analysis.type === "drift") {
     if (analysis.capRate >= 6) economics = 90;
     else if (analysis.capRate >= 5) economics = 75;
@@ -469,6 +478,17 @@ function makeOneLine(
   score: number,
   highRisks: number,
 ): string {
+  if (analysis.type === "privat") {
+    const offerKr = fmtKrShort(analysis.suggestedOffer);
+    if (analysis.premiumVsMarket > 10) {
+      return `Boligen er ${analysis.premiumVsMarket.toFixed(0)}% over markedet. Foreslået bud: ${offerKr}. Brug forhandlings-håndtagene nedenfor.`;
+    }
+    if (analysis.premiumVsMarket < -5) {
+      return `Boligen er ${Math.abs(analysis.premiumVsMarket).toFixed(0)}% under markedet — fair pris. Få byggesagkyndig på inden bud.`;
+    }
+    return `Boligen er prissat tæt på markedsniveau. Foreslået bud: ${offerKr}. ${analysis.negotiationLevers.length} håndtag til forhandling.`;
+  }
+
   const strategy =
     analysis.type === "drift"
       ? "driftsinvestering"
@@ -483,7 +503,9 @@ function makeOneLine(
     if (analysis.type === "renovering") {
       return `Stærk flip-case med ${analysis.marginPct.toFixed(0)}% margin på ${analysis.holdingMonths} mdr. Anbefales hvis renoverings-skøn holder.`;
     }
-    return `Lovende langsigtet case med IRR ${analysis.irr.toFixed(1)}% over ${analysis.holdYears} år. Anbefales.`;
+    if (analysis.type === "vaerdistigning") {
+      return `Lovende langsigtet case med IRR ${analysis.irr.toFixed(1)}% over ${analysis.holdYears} år. Anbefales.`;
+    }
   }
 
   if (score >= 60) {
@@ -497,14 +519,180 @@ function makeOneLine(
   return `Frarådes som ${strategy} på det nuværende grundlag. ${highRisks} højrisiko-flags. Brug evalueringen til at forhandle.`;
 }
 
+// ─── PRIVAT-bolig model ────────────────────────────
+
+export function calcPrivat(
+  property: PropertyData,
+  macro: MacroData | null,
+  imageAnalysis: {
+    overallCondition: RoomCondition["condition"];
+    rooms: RoomCondition[];
+    summary: string;
+  } | null,
+): PrivatAnalysis {
+  const purchasePrice = property.askingPrice ?? 0;
+  const area = property.totalArea ?? property.residentialArea ?? 0;
+  const pricePerSqm = area > 0 ? purchasePrice / area : 0;
+  const avgSqmPriceMunicipality =
+    macro?.housingMarket?.avgSqmPriceMunicipality ?? null;
+  const avgSqmPriceRegion = macro?.housingMarket?.avgSqmPriceRegion ?? null;
+
+  const premiumVsMarket = avgSqmPriceMunicipality
+    ? ((pricePerSqm - avgSqmPriceMunicipality) / avgSqmPriceMunicipality) * 100
+    : 0;
+
+  // Stand: brug billedanalyse hvis tilgængelig, ellers fallback baseret på alder
+  const rooms = imageAnalysis?.rooms ?? [];
+  let overallCondition: RoomCondition["condition"] =
+    imageAnalysis?.overallCondition ?? "ok";
+
+  if (!imageAnalysis && property.buildingYear) {
+    const age = new Date().getFullYear() - property.buildingYear;
+    const renovYear = property.renovationYear ?? property.buildingYear;
+    const renovAge = new Date().getFullYear() - renovYear;
+    if (renovAge < 5) overallCondition = "ny";
+    else if (renovAge < 15) overallCondition = "god";
+    else if (renovAge < 30) overallCondition = "ok";
+    else if (age > 60) overallCondition = "slidt";
+    else overallCondition = "ok";
+  }
+
+  const totalRenovationEstimate = rooms.reduce(
+    (sum, r) => sum + (r.renovationCostEstimate ?? 0),
+    0,
+  );
+
+  // Forhandlings-strategi
+  const totalCostIncludingReno = purchasePrice + totalRenovationEstimate;
+  const effectiveSqmPriceAfterReno =
+    area > 0 ? totalCostIncludingReno / area : 0;
+
+  // Forhandlings-rabat baseret på premium + stand
+  let baseDiscount = 0;
+  if (premiumVsMarket > 15) baseDiscount += 8;
+  else if (premiumVsMarket > 5) baseDiscount += 4;
+  if (overallCondition === "slidt") baseDiscount += 8;
+  else if (overallCondition === "ok") baseDiscount += 3;
+  else if (overallCondition === "kritisk") baseDiscount += 15;
+
+  const suggestedOffer = Math.round(purchasePrice * (1 - baseDiscount / 100));
+  const maxRecommendedPrice = avgSqmPriceMunicipality
+    ? Math.round(
+        avgSqmPriceMunicipality * area * 1.05 - totalRenovationEstimate * 0.5,
+      )
+    : Math.round(purchasePrice * 0.97);
+
+  // Forhandlings-håndtag
+  const negotiationLevers: NegotiationLever[] = [];
+
+  // Marked
+  if (premiumVsMarket > 10 && avgSqmPriceMunicipality) {
+    negotiationLevers.push({
+      category: "marked-data",
+      title: `Prisen ligger ${premiumVsMarket.toFixed(0)}% over markedsnormen`,
+      argument: `Den gennemsnitlige m²-pris i ${macro?.municipality ?? "kommunen"} er ca. ${fmtKrShort(avgSqmPriceMunicipality)}/m². Denne bolig udbydes til ${fmtKrShort(pricePerSqm)}/m² — det er ${premiumVsMarket.toFixed(0)}% over snittet. Spørg sælger om hvad der retfærdiggør prispræmien.`,
+      potentialDiscount: Math.round(
+        ((pricePerSqm - avgSqmPriceMunicipality) * area) / 2,
+      ),
+    });
+  } else if (premiumVsMarket < -5 && avgSqmPriceMunicipality) {
+    negotiationLevers.push({
+      category: "marked-data",
+      title: `Prisen ligger ${Math.abs(premiumVsMarket).toFixed(0)}% UNDER markedsnormen`,
+      argument: `Boligen er prissat under markedsniveau (${fmtKrShort(avgSqmPriceMunicipality)}/m² vs. denne ${fmtKrShort(pricePerSqm)}/m²). Det kan være tegn på skjulte mangler — gå grundigt til værks med byggesagkyndig før du forhandler op.`,
+      potentialDiscount: null,
+    });
+  }
+
+  // Stand-baserede håndtag
+  rooms
+    .filter((r) => r.condition === "slidt" || r.condition === "kritisk")
+    .forEach((r) => {
+      negotiationLevers.push({
+        category: "stand",
+        title: `${r.room}: ${r.condition === "kritisk" ? "kritisk stand" : "slidt"}`,
+        argument: `${r.observations.join(". ")} Estimeret renovering: ${fmtKrShort(r.renovationCostEstimate ?? 0)}. Forlang prisen reduceret med halvdelen af det beløb som kompensation.`,
+        potentialDiscount: Math.round((r.renovationCostEstimate ?? 0) * 0.5),
+      });
+    });
+
+  // Energi
+  if (
+    property.energyLabel &&
+    ["E", "F", "G"].includes(property.energyLabel.toUpperCase())
+  ) {
+    negotiationLevers.push({
+      category: "stand",
+      title: `Energimærke ${property.energyLabel} — kommende krav`,
+      argument: `EU's bygnings-direktiv (EPBD) kræver gradvis energi-renovering. Energimærke ${property.energyLabel} betyder typisk udgifter på 100-300.000 kr inden 2033. Indregn det i din budbeskrivelse.`,
+      potentialDiscount: 150000,
+    });
+  }
+
+  // Praktiske
+  negotiationLevers.push({
+    category: "praktisk",
+    title: "Tag forbehold for bankfinansiering",
+    argument: `Inkludér forbehold om finansiering på ${Math.round(purchasePrice * 0.8 / 100000) * 100000} kr i 30-årig fast forrentet realkredit. Hvis banken vurderer boligen lavere end udbudsprisen, har du juridisk grund til at forhandle ned.`,
+    potentialDiscount: null,
+  });
+
+  negotiationLevers.push({
+    category: "praktisk",
+    title: "Bestil tilstandsrapport og elsyn",
+    argument: `Salgsopstillingen viser den positive vinkel. En egen tilstandsrapport (5.000-8.000 kr) afslører ofte mangler der ikke er nævnt — direkte ammunition i prisforhandlingen.`,
+    potentialDiscount: null,
+  });
+
+  // Ejer-tid
+  negotiationLevers.push({
+    category: "ejer",
+    title: "Hvor længe har boligen været til salg?",
+    argument: `Spørg mægleren hvor mange dage boligen har været annonceret. Over 60 dage = stærk forhandlingsposition. Over 120 dage = sælger er ofte villig til 8-12% under udbudspris.`,
+    potentialDiscount: null,
+  });
+
+  return {
+    type: "privat",
+    purchasePrice,
+    area,
+    avgSqmPriceMunicipality,
+    avgSqmPriceRegion,
+    pricePerSqm,
+    premiumVsMarket,
+    overallCondition,
+    rooms,
+    totalRenovationEstimate,
+    suggestedOffer,
+    maxRecommendedPrice,
+    negotiationLevers,
+    totalCostIncludingReno,
+    effectiveSqmPriceAfterReno,
+  };
+}
+
+function fmtKrShort(n: number): string {
+  if (n >= 1_000_000)
+    return `${(n / 1_000_000).toFixed(1).replace(".", ",")} mio. kr`;
+  if (n >= 1_000) return `${Math.round(n / 1_000).toLocaleString("da-DK")}.000 kr`;
+  return `${Math.round(n).toLocaleString("da-DK")} kr`;
+}
+
 // ─── Public API ───────────────────────────────────
 
 export function runStrategyAnalysis(
   property: PropertyData,
   macro: MacroData | null,
   strategy: Strategy,
+  imageAnalysis?: {
+    overallCondition: RoomCondition["condition"];
+    rooms: RoomCondition[];
+    summary: string;
+  } | null,
 ): StrategyAnalysis {
   if (strategy === "drift") return calcDrift(property);
   if (strategy === "renovering") return calcRenovering(property, macro);
+  if (strategy === "privat")
+    return calcPrivat(property, macro, imageAnalysis ?? null);
   return calcVaerdistigning(property, macro);
 }

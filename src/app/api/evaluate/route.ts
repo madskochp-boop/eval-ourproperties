@@ -9,7 +9,13 @@ import { extractFromFilename } from "@/lib/filename-extract";
 import { enrichWithMacro } from "@/lib/macro";
 import { runStrategyAnalysis, detectRisks, calcScore } from "@/lib/strategies";
 import { saveEvaluation, makeId } from "@/lib/store";
-import type { PropertyData, Strategy, EvaluationResult } from "@/lib/types";
+import { analyzeImages, mediaTypeFromName } from "@/lib/image-analysis";
+import type {
+  PropertyData,
+  Strategy,
+  EvaluationResult,
+  RoomCondition,
+} from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -125,8 +131,16 @@ export async function POST(req: NextRequest) {
       } as PropertyData);
     }
 
+    // Adskil billeder fra dokumenter — billeder analyseres separat med vision
+    const docFiles = allFiles.filter(
+      (f) => mediaTypeFromName(f.name) === null,
+    );
+    const imageFiles = allFiles.filter(
+      (f) => mediaTypeFromName(f.name) !== null,
+    );
+
     const fileResults = await Promise.allSettled(
-      allFiles.map(async ({ name, buffer, docType }) => {
+      docFiles.map(async ({ name, buffer, docType }) => {
         const lower = name.toLowerCase();
         if (lower.endsWith(".pdf")) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -145,6 +159,24 @@ export async function POST(req: NextRequest) {
     for (const r of fileResults) {
       if (r.status === "fulfilled" && r.value) {
         property = mergePropertyData(property, r.value);
+      }
+    }
+
+    // Hvis adresse ikke fandtes i materialet, prøv at læse den fra filnavnene
+    if (!property.address) {
+      for (const f of allFiles) {
+        const fromName = extractFromFilename(f.name);
+        if (fromName.address) {
+          property = {
+            ...property,
+            address: fromName.address,
+            zipCode: property.zipCode ?? fromName.zipCode ?? null,
+            city: property.city ?? fromName.city ?? null,
+            municipality:
+              property.municipality ?? fromName.municipality ?? null,
+          };
+          break;
+        }
       }
     }
 
@@ -191,8 +223,33 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    // Billed-analyse (kun for "privat" strategi — sparer Claude-calls ellers)
+    let imageAnalysis: {
+      overallCondition: RoomCondition["condition"];
+      rooms: RoomCondition[];
+      summary: string;
+    } | null = null;
+    if (strategy === "privat" && imageFiles.length > 0) {
+      try {
+        const inputs = imageFiles
+          .map((f) => {
+            const mt = mediaTypeFromName(f.name);
+            return mt ? { buffer: f.buffer, mediaType: mt, name: f.name } : null;
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+        imageAnalysis = await analyzeImages(inputs);
+      } catch (e) {
+        console.error("[evaluate] image-analysis fejlede:", e);
+      }
+    }
+
     // Kør strategi-analyse
-    const analysis = runStrategyAnalysis(enrichedProperty, macro, strategy);
+    const analysis = runStrategyAnalysis(
+      enrichedProperty,
+      macro,
+      strategy,
+      imageAnalysis,
+    );
     const risks = detectRisks(enrichedProperty, macro, analysis);
     const score = calcScore(enrichedProperty, analysis, risks);
 

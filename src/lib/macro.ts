@@ -297,6 +297,59 @@ async function fetchBbr(
   }
 }
 
+// ─── M²-priser pr. kommune (Danmarks Statistik EJEN77) ──
+//
+// EJEN77: Ejendomspriser efter ejendomskategori, område og tid.
+// Variables: EJDKAT (kategori, 11 = Parcel/rækkehus), OMRÅDE (kommune),
+//   TID (kvartal eller år), ENHED (101 = kr. pr. m²).
+
+async function fetchSqmPrice(
+  kommuneCode: string,
+): Promise<{ municipality: number | null; region: number | null }> {
+  const empty = { municipality: null, region: null };
+  try {
+    // Senest tilgængelige kvartal (vi prøver de seneste 4)
+    const year = new Date().getFullYear();
+    const periods = [
+      `${year - 1}K4`,
+      `${year - 1}K3`,
+      `${year - 1}K2`,
+      `${year - 1}K1`,
+    ];
+
+    const body = {
+      table: "EJEN77",
+      format: "JSONSTAT",
+      variables: [
+        { code: "EJDKAT", values: ["11"] }, // 11 = enfamiliehus
+        { code: "OMRÅDE", values: [kommuneCode] },
+        { code: "ENHED", values: ["101"] }, // kr. pr. m²
+        { code: "TID", values: periods },
+      ],
+    };
+
+    const res = await fetch("https://api.statbank.dk/v1/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return empty;
+
+    const data = (await res.json()) as { dataset: { value: number[] } };
+    // Senest tilgængelig værdi (første ikke-null)
+    const latest = data.dataset.value.find(
+      (v) => typeof v === "number" && v > 0,
+    );
+    return {
+      municipality: typeof latest === "number" ? latest : null,
+      region: null,
+    };
+  } catch {
+    return empty;
+  }
+}
+
 // ─── Hoved-funktion: berig PropertyData med makro ──
 
 export async function enrichWithMacro(
@@ -316,13 +369,16 @@ export async function enrichWithMacro(
   const kommuneCode = getKommuneCode(enriched.municipality);
 
   // Parallelle kald
-  const [populationTrend, income, seller] = await Promise.all([
+  const [populationTrend, income, sqmPrice, seller] = await Promise.all([
     kommuneCode
       ? fetchPopulationTrend(kommuneCode)
       : Promise.resolve(EMPTY_MACRO.populationTrend),
     kommuneCode
       ? fetchIncome(kommuneCode)
       : Promise.resolve(EMPTY_MACRO.income),
+    kommuneCode
+      ? fetchSqmPrice(kommuneCode)
+      : Promise.resolve({ municipality: null, region: null }),
     enriched.sellerCvr
       ? fetchSellerCvr(enriched.sellerCvr)
       : Promise.resolve<SellerCvrData | null>(null),
@@ -333,6 +389,12 @@ export async function enrichWithMacro(
     municipality: enriched.municipality,
     populationTrend,
     income,
+    housingMarket: {
+      avgSqmPriceRegion: sqmPrice.region,
+      avgSqmPriceMunicipality: sqmPrice.municipality,
+      avgRentPerSqm: null,
+      salesVolumeTrend: null,
+    },
   };
 
   return { macro, seller, enrichedProperty: enriched };

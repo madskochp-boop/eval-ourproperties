@@ -9,7 +9,7 @@ import {
   detectDocType,
 } from "@/lib/doc-types";
 
-type Strategy = "drift" | "renovering" | "vaerdistigning";
+type Strategy = "drift" | "renovering" | "vaerdistigning" | "privat";
 type InputMode = "file" | "url";
 
 interface TaggedFile {
@@ -17,27 +17,41 @@ interface TaggedFile {
   docType: DocType;
 }
 
-const STRATEGIES: Array<{ id: Strategy; label: string; description: string }> =
-  [
-    {
-      id: "drift",
-      label: "Høj afkast i drift",
-      description:
-        "10-årig cashflow med fokus på løbende afkast, NPI-vækst og lejer-stabilitet. Konservativ.",
-    },
-    {
-      id: "renovering",
-      label: "Renoveringscase til flipping",
-      description:
-        "Køb under markedspris, renover og videresælg. 18-36 mdr horisont. Marginer + tids-risiko.",
-    },
-    {
-      id: "vaerdistigning",
-      label: "Værdistigning over tid",
-      description:
-        "5-10 års hold med fokus på område-vækst, m²-prisudvikling og exit-multipel.",
-    },
-  ];
+const STRATEGIES: Array<{
+  id: Strategy;
+  label: string;
+  description: string;
+  group: "investering" | "privat";
+}> = [
+  {
+    id: "drift",
+    label: "Høj afkast i drift",
+    description:
+      "10-årig cashflow med fokus på løbende afkast, NPI-vækst og lejer-stabilitet. Konservativ.",
+    group: "investering",
+  },
+  {
+    id: "renovering",
+    label: "Renoveringscase til flipping",
+    description:
+      "Køb under markedspris, renover og videresælg. 18-36 mdr horisont. Marginer + tids-risiko.",
+    group: "investering",
+  },
+  {
+    id: "vaerdistigning",
+    label: "Værdistigning over tid",
+    description:
+      "5-10 års hold med fokus på område-vækst, m²-prisudvikling og exit-multipel.",
+    group: "investering",
+  },
+  {
+    id: "privat",
+    label: "Privat bolig — skal jeg købe?",
+    description:
+      "Sammenligning af m²-pris vs. kommunen, billed-baseret stand-vurdering og konkrete forhandlingsråd.",
+    group: "privat",
+  },
+];
 
 export function EvaluatorForm() {
   const [strategy, setStrategy] = useState<Strategy>("drift");
@@ -191,7 +205,7 @@ export function EvaluatorForm() {
         <div className="font-mono text-[10px] tracking-[2px] uppercase text-clay font-semibold mb-5">
           1 · Hvilken strategi?
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {STRATEGIES.map((s) => (
             <StrategyCard
               key={s.id}
@@ -199,6 +213,7 @@ export function EvaluatorForm() {
               onClick={() => setStrategy(s.id)}
               label={s.label}
               description={s.description}
+              isPrivat={s.group === "privat"}
             />
           ))}
         </div>
@@ -226,11 +241,20 @@ export function EvaluatorForm() {
           </ModeButton>
         </div>
 
+        {strategy === "privat" && (
+          <div className="mb-4 border border-clay/30 bg-clay/5 px-4 py-3 text-sm font-serif-body text-graphite">
+            <strong className="text-ink">Tip:</strong> Upload også billeder
+            (jpg/png) af køkken, bad, gulv, vinduer, facade og tag. Vi kører
+            billedgenkendelse på dem og giver konkrete forhandlings-argumenter
+            baseret på stand.
+          </div>
+        )}
         {inputMode === "file" ? (
           <FileDropzone
             taggedFiles={taggedFiles}
             onChange={onFileChange}
             onTagChange={setDocTypeForFile}
+            allowImages={strategy === "privat"}
           />
         ) : (
           <input
@@ -294,11 +318,13 @@ function StrategyCard({
   onClick,
   label,
   description,
+  isPrivat,
 }: {
   selected: boolean;
   onClick: () => void;
   label: string;
   description: string;
+  isPrivat?: boolean;
 }) {
   return (
     <button
@@ -319,8 +345,15 @@ function StrategyCard({
           {selected && <span className="w-2 h-2 rounded-full bg-ink" />}
         </span>
         <div className="flex-1">
-          <div className="font-heading text-lg text-ink leading-snug mb-1.5">
-            {label}
+          <div className="flex items-baseline gap-2 mb-1.5">
+            <div className="font-heading text-lg text-ink leading-snug">
+              {label}
+            </div>
+            {isPrivat && (
+              <span className="font-mono text-[9px] tracking-[1.5px] uppercase text-clay font-semibold">
+                Ny
+              </span>
+            )}
           </div>
           <div className="text-xs text-graphite leading-relaxed font-serif-body">
             {description}
@@ -359,18 +392,24 @@ function FileDropzone({
   taggedFiles,
   onChange,
   onTagChange,
+  allowImages = false,
 }: {
   taggedFiles: TaggedFile[];
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onTagChange: (idx: number, docType: DocType) => void;
+  allowImages?: boolean;
 }) {
+  const accept = allowImages
+    ? ".pdf,.zip,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif"
+    : ".pdf,.zip,.xlsx,.xls,.csv";
+
   if (taggedFiles.length === 0) {
     return (
       <label className="block border border-dashed border-hairline hover:border-clay transition-colors p-8 sm:p-12 cursor-pointer text-center bg-cream/40">
         <input
           type="file"
           multiple
-          accept=".pdf,.zip,.xlsx,.xls,.csv"
+          accept={accept}
           onChange={onChange}
           className="sr-only"
         />
@@ -378,7 +417,9 @@ function FileDropzone({
           — Træk filer hertil eller klik
         </div>
         <p className="font-serif-body text-graphite text-sm">
-          Salgsopstilling (PDF), datarum (zip), Excel-beregning, BBR-udskrift.
+          {allowImages
+            ? "Salgsopstilling (PDF), tilstandsrapport, BBR, og billeder (jpg/png) af rum."
+            : "Salgsopstilling (PDF), datarum (zip), Excel-beregning, BBR-udskrift."}
           <br />
           Op til 100 MB samlet.
         </p>
@@ -420,7 +461,7 @@ function FileDropzone({
         <input
           type="file"
           multiple
-          accept=".pdf,.zip,.xlsx,.xls,.csv"
+          accept={accept}
           onChange={onChange}
           className="sr-only"
         />

@@ -1,6 +1,6 @@
 // Strukturerede typer for ejendoms-evaluering.
 
-export type Strategy = "drift" | "renovering" | "vaerdistigning";
+export type Strategy = "drift" | "renovering" | "vaerdistigning" | "privat";
 
 export interface PropertyData {
   // ─── Adressering ────────────────────────
@@ -150,10 +150,49 @@ export interface VaerdistigningAnalysis {
   capitalGain: number;
 }
 
+export interface RoomCondition {
+  room: string; // "Køkken", "Badeværelse", "Stue", "Sovevær.", "Gulv", "Vinduer", "Facade", "Tag"
+  condition: "ny" | "god" | "ok" | "slidt" | "kritisk";
+  estimatedAge: string | null; // "0-5 år", "5-15 år", osv.
+  observations: string[]; // "Nyt køkken fra ca. 2022", "Original parket fra 1960'erne, slidt"
+  renovationCostEstimate: number | null; // kr — hvad det koster at bringe til "god" stand
+}
+
+export interface NegotiationLever {
+  category: "stand" | "marked" | "marked-data" | "ejer" | "praktisk";
+  title: string;
+  argument: string; // konkret tekst lejeren/køberen kan bruge i forhandling
+  potentialDiscount: number | null; // kr eller % af pris
+}
+
+export interface PrivatAnalysis {
+  type: "privat";
+  // Inputs
+  purchasePrice: number;
+  area: number; // m²
+  // Marked
+  avgSqmPriceMunicipality: number | null;
+  avgSqmPriceRegion: number | null;
+  pricePerSqm: number;
+  premiumVsMarket: number; // % over/under markedssnit
+  // Stand
+  overallCondition: "ny" | "god" | "ok" | "slidt" | "kritisk";
+  rooms: RoomCondition[];
+  totalRenovationEstimate: number; // sum af alle rooms
+  // Forhandling
+  suggestedOffer: number;
+  maxRecommendedPrice: number;
+  negotiationLevers: NegotiationLever[];
+  // Total
+  totalCostIncludingReno: number;
+  effectiveSqmPriceAfterReno: number;
+}
+
 export type StrategyAnalysis =
   | DriftAnalysis
   | RenoveringAnalysis
-  | VaerdistigningAnalysis;
+  | VaerdistigningAnalysis
+  | PrivatAnalysis;
 
 export interface RiskFlag {
   level: "low" | "medium" | "high";
